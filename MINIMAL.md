@@ -191,15 +191,16 @@ def main(cfg: DictConfig):
             )
 
         # Evaluation
-        net.eval(), probe.eval()
-        correct = 0
-        with torch.inference_mode():
-            for vs, y in test:
-                vs = vs.to("cuda", non_blocking=True)
-                y = y.to("cuda", non_blocking=True)
-                with autocast("cuda", dtype=torch.bfloat16):
-                    correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
-        wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
+        if epoch % 20 == 0 or epoch == cfg.epochs - 1:
+            net.eval(), probe.eval()
+            correct = 0
+            with torch.inference_mode():
+                for vs, y in test:
+                    vs = vs.to("cuda", non_blocking=True)
+                    y = y.to("cuda", non_blocking=True)
+                    with autocast("cuda", dtype=torch.bfloat16):
+                        correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
+            wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
     wandb.finish()
 
 

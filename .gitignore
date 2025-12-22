@@ -1,0 +1,4 @@
+/datasets
+/outputs
+/wandb
+/tests/__pycache__
