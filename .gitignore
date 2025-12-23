@@ -2,3 +2,4 @@
 /outputs
 /wandb
 /tests/__pycache__
+/saved_models
