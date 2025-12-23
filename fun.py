@@ -117,46 +117,50 @@ def main(cfg: DictConfig):
 
     scaler = GradScaler(enabled="cuda" == "cuda")
     # Training
-    for epoch in range(cfg.epochs):
-        net.train(), probe.train()
-        for vs, y in tqdm.tqdm(train, total=len(train)):
-            with autocast("cuda", dtype=torch.bfloat16):
-                vs = vs.to("cuda", non_blocking=True)
-                y = y.to("cuda", non_blocking=True)
-                emb, proj = net(vs)
-                inv_loss = (proj.mean(0) - proj).square().mean()
-                sigreg_loss = sigreg(proj)
-                lejepa_loss = sigreg_loss * cfg.lamb + inv_loss * (1 - cfg.lamb)
-                y_rep, yhat = y.repeat_interleave(cfg.V), probe(emb.detach())
-                probe_loss = F.cross_entropy(yhat, y_rep)
-                loss = lejepa_loss + probe_loss
-
-            opt.zero_grad()
-            scaler.scale(loss).backward()
-            scaler.step(opt)
-            scaler.update()
-            scheduler.step()
-            wandb.log(
-                {
-                    "train/probe": probe_loss.item(),
-                    "train/lejepa": lejepa_loss.item(),
-                    "train/sigreg": sigreg_loss.item(),
-                    "train/inv": inv_loss.item(),
-                }
-            )
-
-        # Evaluation - only every 10 epochs to speed up training
-        if epoch % 10 == 0 or epoch == cfg.epochs - 1:
-            net.eval(), probe.eval()
-            correct = 0
-            with torch.inference_mode():
-                for vs, y in tqdm.tqdm(test, desc="Validating", leave=False):
+    total_steps = len(train) * cfg.epochs
+    with tqdm.tqdm(total=total_steps, desc="Training") as pbar:
+        for epoch in range(cfg.epochs):
+            net.train(), probe.train()
+            for vs, y in train:
+                with autocast("cuda", dtype=torch.bfloat16):
                     vs = vs.to("cuda", non_blocking=True)
                     y = y.to("cuda", non_blocking=True)
-                    with autocast("cuda", dtype=torch.bfloat16):
-                        correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
-            wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
-    wandb.finish()
+                    emb, proj = net(vs)
+                    inv_loss = (proj.mean(0) - proj).square().mean()
+                    sigreg_loss = sigreg(proj)
+                    lejepa_loss = sigreg_loss * cfg.lamb + inv_loss * (1 - cfg.lamb)
+                    y_rep, yhat = y.repeat_interleave(cfg.V), probe(emb.detach())
+                    probe_loss = F.cross_entropy(yhat, y_rep)
+                    loss = lejepa_loss + probe_loss
+
+                opt.zero_grad()
+                scaler.scale(loss).backward()
+                scaler.step(opt)
+                scaler.update()
+                scheduler.step()
+                wandb.log(
+                    {
+                        "train/probe": probe_loss.item(),
+                        "train/lejepa": lejepa_loss.item(),
+                        "train/sigreg": sigreg_loss.item(),
+                        "train/inv": inv_loss.item(),
+                    }
+                )
+                pbar.update(1)
+                pbar.set_postfix(epoch=epoch+1, loss=loss.item())
+
+            # Evaluation - only every 10 epochs to speed up training
+            if epoch % 10 == 0 or epoch == cfg.epochs - 1:
+                net.eval(), probe.eval()
+                correct = 0
+                with torch.inference_mode():
+                    for vs, y in tqdm.tqdm(test, desc="Validating", leave=False):
+                        vs = vs.to("cuda", non_blocking=True)
+                        y = y.to("cuda", non_blocking=True)
+                        with autocast("cuda", dtype=torch.bfloat16):
+                            correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
+                wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
+        wandb.finish()
 
 
 if __name__ == "__main__":
