@@ -3,4 +3,4 @@
 /wandb
 /tests/__pycache__
 /saved_models
-/__pycache__/
+*/__pycache__/*

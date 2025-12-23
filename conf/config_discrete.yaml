@@ -1,0 +1,21 @@
+# Discrete bottleneck experiment
+V: 4              # Number of views per image
+bs: 64       # Batch size
+epochs: 400      # Training epochs
+lr: 0.0003        # Learning rate
+proj_dim: 128     # Not used in discrete mode, but kept for compatibility
+
+# Discrete mode configuration
+use_discrete: true
+N_groups: 8           # Number of categorical groups
+K_categories: 16      # Categories per group (total capacity = N * log2(K))
+temperature: 0.8     # Softmax temperature (higher = softer distributions)
+
+# Discrete loss weights
+lambda_use: 1.0       # Weight for usage regularization (prevent collapse)
+lambda_ent: 0.08      # Weight for entropy floor (prevent over-peaky distributions)
+H_min: 1.0            # Minimum entropy threshold (for K=16, max entropy ~2.77)
+
+# lamb parameter not used in discrete mode
+lamb: 0.5
+

@@ -1,0 +1,20 @@
+# Discrete bottleneck with higher capacity
+V: 4              # Number of views per image
+bs: 64       # Batch size
+epochs: 200       # Training epochs
+lr: 0.0003       # Learning rate
+proj_dim: 128     # Not used in discrete mode, but kept for compatibility
+
+# Discrete mode configuration - higher capacity
+use_discrete: true
+N_groups:  32  #oups = more capacity
+K_categories: 32      # Categories per group (total capacity = N * log2(K))
+temperature: 1.0      # Softmax temperature
+
+# Discrete loss weights
+lambda_use: 1.0       # Weight for usage regularization
+lambda_ent: 0.05      # Weight for entropy floor
+H_min: 1.0            # Minimum entropy threshold
+
+lamb: 0.5
+

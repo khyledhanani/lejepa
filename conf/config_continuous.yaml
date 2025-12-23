@@ -1,0 +1,11 @@
+# Continuous baseline (your original approach)
+V: 4              # Number of views per image
+bs: 128           # Batch size
+epochs: 100       # Training epochs
+lr: 0.0003        # Learning rate
+proj_dim: 128     # Projection dimension
+lamb: 0.02       # Balance between SIGReg and invariance
+
+# Discrete mode disabled
+use_discrete: false
+
