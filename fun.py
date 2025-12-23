@@ -97,9 +97,9 @@ def main(cfg: DictConfig):
     train_ds = HFDataset("train", V=cfg.V)
     test_ds = HFDataset("validation", V=1)
     train = DataLoader(
-        train_ds, batch_size=cfg.bs, shuffle=True, drop_last=True, num_workers=0
+        train_ds, batch_size=cfg.bs, shuffle=True, drop_last=True, num_workers=8
     )
-    test = DataLoader(test_ds, batch_size=256, num_workers=0)
+    test = DataLoader(test_ds, batch_size=256, num_workers=8)
 
     # modules and loss
     net = ViTEncoder(proj_dim=cfg.proj_dim).to("cuda")
