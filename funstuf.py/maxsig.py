@@ -51,32 +51,26 @@ class MaxSIGReg(torch.nn.Module):
         self.lr = lr
 
     def forward(self, proj):
-        # 1. Adversarial Step: Update projections to maximize non-Gaussianity
-        # Detach input so we don't backprop into encoder during this step
         x = proj.detach()
         
         with torch.enable_grad():
-            # We treat self.projections as the starting point
             curr_A = self.projections.detach().requires_grad_(True)
             
             for _ in range(self.steps):
                 A_norm = F.normalize(curr_A, dim=0)
                 
-                # Compute SIGReg loss (maximize this w.r.t. projections)
                 x_t = (x @ A_norm).unsqueeze(-1) * self.t
                 # err: (..., n_proj, knots)
                 err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
                 loss = (err @ self.weights).mean()
                 
-                # Gradient Ascent on projections
                 grad = torch.autograd.grad(loss, curr_A)[0]
                 curr_A = curr_A + self.lr * grad
         
-        # Update persistent projections (EMA-style to avoid instability)
         with torch.no_grad():
             self.projections.data = 0.9 * self.projections.data + 0.1 * curr_A
         
-        # 2. Compute Final Loss for Encoder using the "hardest" projections
+        # loss
         A_final = F.normalize(self.projections, dim=0)
         x_t = (proj @ A_final).unsqueeze(-1) * self.t
         err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
