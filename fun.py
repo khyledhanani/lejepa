@@ -62,7 +62,7 @@ class HFDataset(torch.utils.data.Dataset):
                 v2.RandomResizedCrop(128, scale=(0.08, 1.0)),
                 v2.RandomApply([v2.ColorJitter(0.8, 0.8, 0.8, 0.2)], p=0.8),
                 v2.RandomGrayscale(p=0.2),
-                v2.RandomApply([v2.GaussianBlur(kernel_size=7, sigma=(0.1, 2.0))]),
+                v2.RandomApply([v2.GaussianBlur(kernel_size=7, sigma=(0.1, 2.0))], p=0.5),
                 v2.RandomApply([v2.RandomSolarize(threshold=128)], p=0.2),
                 v2.RandomHorizontalFlip(),
                 v2.ToImage(),
@@ -97,9 +97,9 @@ def main(cfg: DictConfig):
     train_ds = HFDataset("train", V=cfg.V)
     test_ds = HFDataset("validation", V=1)
     train = DataLoader(
-        train_ds, batch_size=cfg.bs, shuffle=True, drop_last=True, num_workers=8
+        train_ds, batch_size=cfg.bs, shuffle=True, drop_last=True, num_workers=0
     )
-    test = DataLoader(test_ds, batch_size=256, num_workers=8)
+    test = DataLoader(test_ds, batch_size=256, num_workers=0)
 
     # modules and loss
     net = ViTEncoder(proj_dim=cfg.proj_dim).to("cuda")
@@ -112,7 +112,7 @@ def main(cfg: DictConfig):
     warmup_steps = len(train)
     total_steps = len(train) * cfg.epochs
     s1 = LinearLR(opt, start_factor=0.01, total_iters=warmup_steps)
-    s2 = CosineAnnealingLR(opt, T_max=total_steps - warmup_steps, eta_min=1e-3)
+    s2 = CosineAnnealingLR(opt, T_max=total_steps - warmup_steps, eta_min=1e-6)
     scheduler = SequentialLR(opt, schedulers=[s1, s2], milestones=[warmup_steps])
 
     scaler = GradScaler(enabled="cuda" == "cuda")
@@ -145,16 +145,17 @@ def main(cfg: DictConfig):
                 }
             )
 
-        # Evaluation
-        net.eval(), probe.eval()
-        correct = 0
-        with torch.inference_mode():
-            for vs, y in test:
-                vs = vs.to("cuda", non_blocking=True)
-                y = y.to("cuda", non_blocking=True)
-                with autocast("cuda", dtype=torch.bfloat16):
-                    correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
-        wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
+        # Evaluation - only every 10 epochs to speed up training
+        if epoch % 10 == 0 or epoch == cfg.epochs - 1:
+            net.eval(), probe.eval()
+            correct = 0
+            with torch.inference_mode():
+                for vs, y in tqdm.tqdm(test, desc="Validating", leave=False):
+                    vs = vs.to("cuda", non_blocking=True)
+                    y = y.to("cuda", non_blocking=True)
+                    with autocast("cuda", dtype=torch.bfloat16):
+                        correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
+            wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
     wandb.finish()
 
 
