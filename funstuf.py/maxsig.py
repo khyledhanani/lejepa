@@ -8,6 +8,7 @@ from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from torchvision.ops import MLP
 from pathlib import Path
+from datetime import datetime
 
 
 class SIGReg(torch.nn.Module):
@@ -26,6 +27,52 @@ class SIGReg(torch.nn.Module):
         A = torch.randn(proj.size(-1), 256, device="cuda")
         A = A.div_(A.norm(p=2, dim=0))
         x_t = (proj @ A).unsqueeze(-1) * self.t
+        err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
+        statistic = (err @ self.weights) * proj.size(-2)
+        return statistic.mean()
+
+
+class MaxSIGReg(torch.nn.Module):
+    """Adversarial Slicing SIGReg: finds worst-case projections for better isotropy."""
+    def __init__(self, dim=128, n_projections=64, knots=17, steps=1, lr=0.1):
+        super().__init__()
+        t = torch.linspace(0, 3, knots, dtype=torch.float32)
+        dt = 3 / (knots - 1)
+        weights = torch.full((knots,), 2 * dt, dtype=torch.float32)
+        weights[[0, -1]] = dt
+        window = torch.exp(-t.square() / 2.0)
+        self.register_buffer("t", t)
+        self.register_buffer("phi", window)
+        self.register_buffer("weights", weights * window)
+        
+        # Learnable projections (persistent state)
+        self.projections = nn.Parameter(torch.randn(dim, n_projections))
+        self.steps = steps
+        self.lr = lr
+
+    def forward(self, proj):
+        x = proj.detach()
+        
+        with torch.enable_grad():
+            curr_A = self.projections.detach().requires_grad_(True)
+            
+            for _ in range(self.steps):
+                A_norm = F.normalize(curr_A, dim=0)
+                
+                x_t = (x @ A_norm).unsqueeze(-1) * self.t
+                # err: (..., n_proj, knots)
+                err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
+                loss = (err @ self.weights).mean()
+                
+                grad = torch.autograd.grad(loss, curr_A)[0]
+                curr_A = curr_A + self.lr * grad
+        
+        with torch.no_grad():
+            self.projections.data = 0.9 * self.projections.data + 0.1 * curr_A
+        
+        # loss
+        A_final = F.normalize(self.projections, dim=0)
+        x_t = (proj @ A_final).unsqueeze(-1) * self.t
         err = (x_t.cos().mean(-3) - self.phi).square() + x_t.sin().mean(-3).square()
         statistic = (err @ self.weights) * proj.size(-2)
         return statistic.mean()
@@ -62,7 +109,7 @@ class HFDataset(torch.utils.data.Dataset):
                 v2.RandomResizedCrop(128, scale=(0.08, 1.0)),
                 v2.RandomApply([v2.ColorJitter(0.8, 0.8, 0.8, 0.2)], p=0.8),
                 v2.RandomGrayscale(p=0.2),
-                v2.RandomApply([v2.GaussianBlur(kernel_size=7, sigma=(0.1, 2.0))], p=0.5),
+                v2.RandomApply([v2.GaussianBlur(kernel_size=7, sigma=(0.1, 2.0))]),
                 v2.RandomApply([v2.RandomSolarize(threshold=128)], p=0.2),
                 v2.RandomHorizontalFlip(),
                 v2.ToImage(),
@@ -104,7 +151,7 @@ def main(cfg: DictConfig):
     # modules and loss
     net = ViTEncoder(proj_dim=cfg.proj_dim).to("cuda")
     probe = nn.Sequential(nn.LayerNorm(512), nn.Linear(512, 10)).to("cuda")
-    sigreg = SIGReg().to("cuda")
+    sigreg = MaxSIGReg(dim=cfg.proj_dim).to("cuda")
     # Optimizer and scheduler
     g1 = {"params": net.parameters(), "lr": cfg.lr, "weight_decay": 5e-2}
     g2 = {"params": probe.parameters(), "lr": 1e-3, "weight_decay": 1e-7}
@@ -112,14 +159,15 @@ def main(cfg: DictConfig):
     warmup_steps = len(train)
     total_steps = len(train) * cfg.epochs
     s1 = LinearLR(opt, start_factor=0.01, total_iters=warmup_steps)
-    s2 = CosineAnnealingLR(opt, T_max=total_steps - warmup_steps, eta_min=1e-6)
+    s2 = CosineAnnealingLR(opt, T_max=total_steps - warmup_steps, eta_min=1e-3)
     scheduler = SequentialLR(opt, schedulers=[s1, s2], milestones=[warmup_steps])
 
     scaler = GradScaler(enabled="cuda" == "cuda")
     # Training
+    pbar = tqdm.tqdm(total=cfg.epochs * len(train), desc="Training")
     for epoch in range(cfg.epochs):
         net.train(), probe.train()
-        for vs, y in tqdm.tqdm(train, total=len(train)):
+        for vs, y in train:
             with autocast("cuda", dtype=torch.bfloat16):
                 vs = vs.to("cuda", non_blocking=True)
                 y = y.to("cuda", non_blocking=True)
@@ -136,6 +184,7 @@ def main(cfg: DictConfig):
             scaler.step(opt)
             scaler.update()
             scheduler.step()
+            pbar.update(1)
             wandb.log(
                 {
                     "train/probe": probe_loss.item(),
@@ -145,17 +194,33 @@ def main(cfg: DictConfig):
                 }
             )
 
-        # Evaluation - only every 10 epochs to speed up training
-        if epoch % 10 == 0 or epoch == cfg.epochs - 1:
+        # Evaluation - every 50 epochs and on the last one
+        if epoch % 50 == 0 or epoch == cfg.epochs - 1:
             net.eval(), probe.eval()
             correct = 0
             with torch.inference_mode():
-                for vs, y in tqdm.tqdm(test, desc="Validating", leave=False):
+                for vs, y in test:
                     vs = vs.to("cuda", non_blocking=True)
                     y = y.to("cuda", non_blocking=True)
                     with autocast("cuda", dtype=torch.bfloat16):
                         correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
             wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
+    
+    pbar.close()
+    
+    # Save final model with timestamp
+    save_dir = Path("saved_models")
+    save_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_path = save_dir / f"model_{timestamp}.pt"
+    torch.save({
+        'encoder': net.state_dict(),
+        'probe': probe.state_dict(),
+        'config': dict(cfg),
+        'final_acc': correct / len(test_ds)
+    }, model_path)
+    print(f"\nFinal model saved to {model_path}")
+    
     wandb.finish()
 
 
