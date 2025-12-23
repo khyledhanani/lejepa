@@ -158,8 +158,19 @@ def main(cfg: DictConfig):
                         vs = vs.to("cuda", non_blocking=True)
                         y = y.to("cuda", non_blocking=True)
                         with autocast("cuda", dtype=torch.bfloat16):
-                            correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
+                             correct += (probe(net(vs)[0]).argmax(1) == y).sum().item()
                 wandb.log({"test/acc": correct / len(test_ds), "test/epoch": epoch})
+        
+        # Save final model
+        save_dir = Path("saved_models")
+        save_dir.mkdir(exist_ok=True)
+        torch.save({
+            'encoder': net.state_dict(),
+            'probe': probe.state_dict(),
+            'config': dict(cfg)
+        }, save_dir / "final_model.pt")
+        print(f"\nFinal model saved to {save_dir / 'final_model.pt'}")
+        
         wandb.finish()
 
 
