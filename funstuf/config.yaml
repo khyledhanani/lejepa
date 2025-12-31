@@ -1,0 +1,7 @@
+# Training configuration
+V: 4              # number of augmented views
+bs: 64            # batch size
+proj_dim: 128     # projection dimension
+lr: 1e-4          # learning rate
+epochs: 100       # number of training epochs
+lamb: 0.5         # lambda for loss weighting (sigreg vs invariance)
