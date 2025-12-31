@@ -1,7 +1,18 @@
-# Training configuration
-V: 4              # number of augmented views
-bs: 64            # batch size
-proj_dim: 128     # projection dimension
-lr: 1e-4          # learning rate
-epochs: 100       # number of training epochs
-lamb: 0.5         # lambda for loss weighting (sigreg vs invariance)
+# I-JEPA + SIGReg Configuration (arxiv.org/pdf/2301.08243)
+# Architecture
+embed_dim: 384          # ViT embedding dimension
+encoder_depth: 8        # Number of transformer blocks in encoder
+predictor_depth: 6      # Predictor depth (Table 12: deeper is better)
+num_heads: 6            # Attention heads
+
+# Training
+bs: 64                  # batch size
+lr: 1e-4                # learning rate
+epochs: 100             # number of training epochs
+lamb: 0.1               # SIGReg regularization weight
+ema_momentum: 0.996     # EMA momentum for target encoder
+
+# I-JEPA Masking (contiguous target blocks)
+num_targets: 4          # number of target blocks to predict
+target_scale_min: 0.15  # min target block size (fraction of image)
+target_scale_max: 0.25  # max target block size (paper uses ~0.15-0.2)
