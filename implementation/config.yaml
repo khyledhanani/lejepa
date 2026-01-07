@@ -1,0 +1,8 @@
+V: 2
+bs: 64
+proj_dim: 128
+lr: 1e-3
+epochs: 50
+seed: 0
+project: "LeJEPA"
+lamb: 0.01

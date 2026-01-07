@@ -89,10 +89,11 @@ class HFDataset(torch.utils.data.Dataset):
         return len(self.ds)
 
 
-@hydra.main(version_base=None)
+@hydra.main(version_base=None, config_path="./", config_name="config")
 def main(cfg: DictConfig):
-    wandb.init(project="LeJEPA", config=dict(cfg))
-    torch.manual_seed(0)
+    print(cfg)
+    wandb.init(project=cfg.project, config=dict(cfg))
+    torch.manual_seed(cfg.seed)
 
     train_ds = HFDataset("train", V=cfg.V)
     test_ds = HFDataset("validation", V=1)
